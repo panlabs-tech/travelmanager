@@ -13,7 +13,7 @@
     "jsvectormap": "^1.7.0",
     "lucide-react": "^1.21.0",
     "next": "15.1.6",
-    "next-auth": "5.0.0-beta.31",
+    "next-auth": "5.0.0-beta.32",
     "react": "19.0.0",
     "react-dom": "19.0.0"
   },
