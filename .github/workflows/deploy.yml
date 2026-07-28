@@ -36,7 +36,10 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/thiagopanini/travelmanager-${{ matrix.app }}
+          # O dono do repositório, e não um nome cravado: o namespace pessoal
+          # anterior à migração para a org deixou de existir, e um literal
+          # aqui volta a quebrar na próxima vez que o dono mudar.
+          images: ghcr.io/${{ github.repository_owner }}/travelmanager-${{ matrix.app }}
           tags: |
             type=raw,value=latest
             type=sha,format=short

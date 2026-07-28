@@ -11,14 +11,14 @@ O travelmanager roda como **subdomínio de `panlabs.tech`** numa VPS única (Hos
 **Substrato compartilhado, com blast-radius compartilhado aceito — porque o portfólio é experimental, solo e de baixo risco ([0007](0007-autonomia-total-do-agente.md)).** Os nomes vivem em três camadas:
 
 - **(a) Guarda-chuva público** — `panlabs.tech` → `travelmanager.panlabs.tech`. É o único host público; a API nunca é pública ([0004](0004-topologia-de-autenticacao.md)).
-- **(b) Infra do operador** — painel Coolify em `vps.panlabs.tech`; imagens em `ghcr.io/thiagopanini/<projeto>-<app>` (aqui: `travelmanager-web` e `travelmanager-api`).
+- **(b) Infra do operador** — painel Coolify em `vps.panlabs.tech`; imagens em `ghcr.io/<dono-do-repositório>/<projeto>-<app>` (aqui: `travelmanager-web` e `travelmanager-api`). Ver a emenda no fim deste ADR.
 - **(c) Isolamento por projeto** — cada projeto tem o seu **Coolify Project + zona DNS + banco Postgres** próprios. O compartilhamento é de *substrato* (VM, painel, registry), não de *dados*.
 
 ### Topologia de deploy (as-built)
 
 Portão 3, em `push` para `main` (`.github/workflows/deploy.yml`):
 
-1. **build-push** (matriz web/api) → publica `ghcr.io/thiagopanini/travelmanager-{web,api}` (tags `latest` + `sha`).
+1. **build-push** (matriz web/api) → publica `ghcr.io/${{ github.repository_owner }}/travelmanager-{web,api}` (tags `latest` + `sha`).
 2. **deploy (coolify)** → dispara redeploy via webhook (`curl -X POST "$COOLIFY_URL/api/v1/deploy?uuid=…&force=true"`), guardado por `COOLIFY_TOKEN` (sem o secret, build/push rodam e o deploy é pulado sem falhar).
 3. **smoke test** → exige `200` + corpo com "travel" em `https://travelmanager.panlabs.tech`.
 
@@ -44,3 +44,15 @@ Se algum projeto do portfólio ganhar **usuários reais / SLA**, ou precisar de 
 - Os portões de CI (`pr-checks`) ficam descritos no [`CLAUDE.md`](../../CLAUDE.md) (não viram ADR — são CI padrão).
 
 Linguagem e invariantes em [`../../CONTEXT.md`](../../CONTEXT.md); topologia de auth e API interna em [0004](0004-topologia-de-autenticacao.md); fronteira de autonomia em [0007](0007-autonomia-total-do-agente.md).
+
+## Emenda, 2026-07-28: o namespace deixou de ser pessoal
+
+Este ADR foi escrito quando o repositório era `ThiagoPanini/travelmanager`, e cravava `ghcr.io/thiagopanini/` nas duas descrições. A migração para a organização `panlabs-tech`, em 2026-07-18, invalidou o namespace **sem que nada acusasse**: o `deploy.yml` continuou apontando para lá, e a partir do dia seguinte todo build terminou em
+
+```
+denied: permission_denied: The requested installation does not exist
+```
+
+O `deploy (coolify)` depende de `build-push` sem `if: always()`, então ele saía **skipped**. O sintoma foi silêncio: a esteira ficava vermelha num job e não dizia que produção havia parado de receber imagem.
+
+A decisão desta emenda: o namespace passa a ser `${{ github.repository_owner }}`, derivado do dono do repositório em vez de literal. A decisão de substrato não mudou; o que mudou foi parar de cravar um nome que a plataforma já sabe.
