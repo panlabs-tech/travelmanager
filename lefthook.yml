@@ -1,12 +1,48 @@
-# Hooks locais. CI continua sendo o gate real (pr-checks.yml).
+# O portão 1, local, antes do commit. O portão 2 é a CI, no PR
+# (`.github/workflows/pr-checks.yml`), e ele continua sendo o gate real: o que
+# este arquivo faz é pegar barato o erro barato, não substituir aquele.
+#
+# **As ferramentas são equipamento da máquina, não do repo.** `lefthook`,
+# `gitleaks` e o runtime que serve o `pnpm` são provisionados globalmente; este
+# arquivo é a *declaração* de que este repo adere ao portão, e é ela que é
+# versionada. Um repo aberto numa máquina sem equipamento provisionado perde
+# capacidade **por design**, e não por omissão.
+
 pre-commit:
   parallel: true
   commands:
+    # Superfície Node. O binário direto, e não `pnpm exec biome`: aquele sai
+    # verde sem ter verificado nada quando o filtro não casa, e o falso-verde
+    # está registrado no `AGENTS.md`.
     biome:
       glob: "*.{js,ts,jsx,tsx,json}"
-      run: pnpm exec biome check --no-errors-on-unmatched {staged_files}
+      run: node_modules/.bin/biome check --no-errors-on-unmatched {staged_files}
+
+    # Superfície Python. `--check` e não a escrita: um hook que reescreve
+    # arquivo no meio do commit deixa o índice diferente do que o autor leu, e o
+    # que ele revisou não é o que aterrissa.
+    ruff-format:
+      root: "apps/api/"
+      glob: "*.py"
+      run: uv run ruff format --check {staged_files}
+    ruff-lint:
+      root: "apps/api/"
+      glob: "*.py"
+      run: uv run ruff check {staged_files}
+
+    # O scan de segredos roda sobre o **staged**, que é o único momento em que
+    # barrar ainda é barato: depois do commit o segredo já está no histórico
+    # local, e tirá-lo de lá é reescrita de história, não conserto.
+    #
+    # Binário direto, a mesma ferramenta que o portão de CI compartilhado roda,
+    # e não a action wrapper: aquela passou a exigir licença paga em repositório
+    # de organização. Dois scanners diferentes fariam "passou no local" e
+    # "passou na CI" significarem coisas diferentes.
+    gitleaks:
+      run: gitleaks git --staged --no-banner --redact
 
 commit-msg:
   commands:
+    # Conventional Commits, subject minúsculo (AGENTS.md).
     commitlint:
       run: pnpm exec commitlint --edit {1}

@@ -10,8 +10,9 @@
 .env.local
 .env.*.local
 !.env.example
-.mcp.json
-.codex/config.toml
+# `.mcp.json` deixou de ser ignorado: ele é versionado com placeholder de
+# variável de ambiente, e o valor real vem do ambiente do agente. Ver
+# docs/agents/mcps.md.
 .claude/settings.local.json
 
 # Python

@@ -1,9 +1,20 @@
 name: pr-checks
 
-# Portão 2 — gate real antes do merge na main.
-# Dispara no push das branches de trabalho (incluindo worktree/** geradas
-# pelo agente). open-pr abre PR para a main quando todos os checks ficam
-# verdes; o merge é autônomo no verde (ADR-0007).
+# Portão 2, o gate real antes do merge na main.
+#
+# As pernas por superfície **referenciam os workflows compartilhados da org**
+# (`panlabs-tech/.github`) em vez de copiá-los. O motivo é medido, não estético:
+# os quatro arquivos de CI da frota nasceram copiados um do outro e divergiram
+# entre 48% e 86% em sete semanas. Origem comum não impede deriva; referência
+# impede.
+#
+# Os status publicados são dois nomes fixos, `checks` e `security`, iguais em
+# todo repo da org, produzidos pelos jobs de rollup abaixo. É isso que faz um
+# required check de nome fixo sobreviver a stack variável.
+#
+# Dispara no push das branches de trabalho (incluindo worktree/** geradas pelo
+# agente). open-pr abre PR para a main quando os checks ficam verdes; o merge é
+# autônomo no verde (ADR-0007).
 
 on:
   push:
@@ -24,92 +35,93 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  web:
-    name: web
+  # --- as pernas por superfície ---------------------------------------------
+
+  # `working-directory: .` e não `apps/web`: o workspace pnpm instala do
+  # lockfile da raiz, e os scripts da raiz (`lint`, `typecheck`, `test`)
+  # delegam para a aplicação. Não há script `build` na raiz, e o workflow
+  # compartilhado pula essa etapa sozinho quando ele não existe.
+  checks-node:
+    name: checks-node
+    uses: panlabs-tech/.github/.github/workflows/checks-node.yml@v1.0.0
+    with:
+      package-manager: pnpm
+      working-directory: .
+
+  # `-m "not integration"` porque a suíte marcada exige Postgres de pé, e o
+  # gate não sobe serviço: a separação é do repo, e está documentada em
+  # `docs/agents/local-dev.md`.
+  checks-python:
+    name: checks-python
+    uses: panlabs-tech/.github/.github/workflows/checks-python.yml@v1.0.0
+    with:
+      working-directory: apps/api
+      pytest-args: -m "not integration" -q
+
+  # O rollup: id fixo, `needs` sobre as pernas por superfície deste repo.
+  # `if: always()` mais checagem explícita do resultado, para que uma perna
+  # reprovada **reprove** o rollup em vez de pulá-lo: pulado não é reprovado, e
+  # é esse o footgun que mata o desenho ingênuo. O mesmo cálculo é modelado e
+  # testado em Python, em `panlabs.ci.rollup.rollup_conclusion`, no repo meta.
+  checks:
+    name: checks
+    needs: [checks-node, checks-python]
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: lint (biome)
-        run: pnpm exec biome check apps/web
-      - name: typecheck (tsc)
-        run: pnpm --filter @travelmanager/web typecheck
-      - name: test (vitest)
-        run: pnpm --filter @travelmanager/web test
+      - name: agregar o resultado das pernas por superfície
+        run: |
+          set -euo pipefail
+          for leg in "checks-node:${{ needs.checks-node.result }}" \
+                     "checks-python:${{ needs.checks-python.result }}"; do
+            name="${leg%%:*}"
+            result="${leg#*:}"
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "::error::${name} reprovou (${result})."
+              exit 1
+            fi
+          done
 
-  api:
-    name: api
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/api
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - run: uv sync --frozen
-      - name: format (ruff)
-        run: uv run ruff format --check .
-      - name: lint (ruff)
-        run: uv run ruff check .
-      - name: typecheck (pyright)
-        run: uv run pyright
-      - name: test (pytest)
-        run: uv run pytest -m "not integration" -q
+  # --- o scan de segredos ----------------------------------------------------
 
+  # O compartilhado roda o binário do gitleaks, e não a action wrapper: aquela
+  # passou a exigir licença paga em repositório de organização, e era ela que
+  # este caller usava.
+  security-scan:
+    uses: panlabs-tech/.github/.github/workflows/security.yml@v1.0.0
+
+  # Job de fachada em volta de `security-scan`, e não um rollup de superfícies
+  # (só existe um scan de segredos possível por repo). Existe porque um job que
+  # chama um reusable workflow via `uses:` publica o check com o nome
+  # "<job do caller> / <job do workflow chamado>", nunca só o nome do job do
+  # caller: comportamento do GitHub Actions, sem opção para suprimir. Sem esta
+  # fachada, o required check `security` da org nunca existiria com esse nome.
   security:
     name: security
+    needs: [security-scan]
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: agregar o resultado do scan
+        run: |
+          set -euo pipefail
+          result="${{ needs.security-scan.result }}"
+          if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+            echo "::error::security-scan reprovou (${result})."
+            exit 1
+          fi
 
+  # --- a abertura do PR ------------------------------------------------------
+
+  # O Dependabot já abre o próprio PR: rodar `open-pr` na branch dele seria, no
+  # melhor caso, ruído, e no pior, corrida com quem abriu primeiro. A condição
+  # não afrouxa o gate porque `open-pr` nunca foi required (seria circular: é o
+  # job que cria o PR).
   open-pr:
     name: open-pr
-    needs: [web, api, security]
-    runs-on: ubuntu-latest
+    needs: [checks, security]
+    if: github.actor != 'dependabot[bot]'
+    uses: panlabs-tech/.github/.github/workflows/open-pr.yml@v1.0.0
     permissions:
       contents: read
       pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Abrir PR para a main se ainda nao existir
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRANCH: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-
-          if [ "$(gh pr list --head "$BRANCH" --base main --state open --json number --jq 'length')" -ne 0 ]; then
-            echo "::notice::Ja existe PR aberto de $BRANCH para a main."
-            exit 0
-          fi
-
-          git fetch --quiet origin main
-          if [ "$(git rev-list --count FETCH_HEAD..HEAD)" -eq 0 ]; then
-            echo "::notice::$BRANCH nao tem commits novos sobre a main."
-            exit 0
-          fi
-
-          title="$(git log "FETCH_HEAD..HEAD" --pretty=%s | head -n1 || true)"
-          [ -z "$title" ] && title="$(git log -1 --pretty=%s)"
-
-          gh pr create \
-            --base main \
-            --head "$BRANCH" \
-            --title "$title" \
-            --body "PR aberto automaticamente apos checks verdes (pr-checks). Merge autonomo no verde (ADR-0007)."
-
-          echo "::notice::PR aberto: $BRANCH -> main"

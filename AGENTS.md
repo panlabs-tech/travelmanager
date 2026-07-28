@@ -1,4 +1,4 @@
-# CLAUDE.md
+# travelmanager
 
 > Repositório em **pt-BR** (prosa, comentários, copy de UI, commits).
 
@@ -63,19 +63,27 @@ node_modules/.bin/biome check apps/web             # NÃO use `pnpm exec biome` 
 
 ## Gate
 
-Workflow `pr-checks` (web: biome + typecheck + vitest · api: ruff + pyright + pytest · gitleaks). `main` é protegida → o `pr-checks` abre o PR no verde e o agente mergeia sozinho (merge autônomo — [ADR-0007](docs/adr/0007-autonomia-total-do-agente.md)).
+São dois portões, e eles pegam coisas diferentes.
+
+**Portão 1, local:** `lefthook` antes do commit, com formatação e verificação por superfície, scan de segredos (`gitleaks`) e padrão de mensagem de commit. Ele mora no [`lefthook.yml`](lefthook.yml) e no [`commitlint.config.mjs`](commitlint.config.mjs) versionados; as ferramentas são equipamento da máquina, provisionadas globalmente. Erro barato é pego barato aqui.
+
+**Portão 2, CI:** o workflow [`pr-checks`](.github/workflows/pr-checks.yml), que **referencia os workflows compartilhados da org** (`panlabs-tech/.github`) em vez de copiá-los. As pernas por superfície rodam o que sempre rodaram (web: biome + typecheck + vitest · api: ruff format + ruff check + pyright + pytest), e o que muda é de onde vem a definição delas.
+
+Os status publicados são dois nomes fixos, `checks` e `security`, iguais em todo repo da org, produzidos por jobs de rollup que agregam as pernas. É isso que faz um required check de nome fixo sobreviver a stack variável.
+
+`main` é protegida → o `pr-checks` abre o PR no verde e o agente mergeia sozinho (merge autônomo, [ADR-0007](docs/adr/0007-autonomia-total-do-agente.md)). O merge é **squash**, e é o GitHub quem assina o commit que aterrissa: por isso o commit local do agente nunca precisa ser assinado.
 
 ## Agent skills
 
-Config que as skills de engenharia (Matt Pocock) assumem por repo — detalhe em `docs/agents/`.
+**Skills, subagentes e comandos não moram neste repo.** Eles são equipamento da máquina de desenvolvimento, instalados globalmente e mantidos num lugar só (cláusula de zero redundância da org). O que vive em `docs/agents/` é a configuração **deste** repo que elas assumem.
 
 ### Fluxo de desenvolvimento
 
-Default grill → to-issues → tdd + **Modo de implementação autônoma** em [`docs/agents/workflow.md`](docs/agents/workflow.md).
+Default grill → to-tickets → tdd + **Modo de implementação autônoma** em [`docs/agents/workflow.md`](docs/agents/workflow.md).
 
 ### Issue tracker
 
-Issues e PRDs vivem no GitHub Issues (`ThiagoPanini/travelmanager`, via `gh`); PRs externos **não** entram na triagem. Ver `docs/agents/issue-tracker.md`.
+Issues e PRDs vivem no GitHub Issues (`panlabs-tech/travelmanager`, via `gh`); PRs externos **não** entram na triagem. Ver `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
